@@ -15,6 +15,7 @@ Quiver Hub transforms traditional single-purpose drone data viewers into a compr
 - **Real-time Updates** - WebSocket-based live data streaming
 - **Multi-drone Support** - Handle data from multiple drones simultaneously
 - **Extensible Design** - Easy to add new apps and data pipelines
+- **Self-hosted** - Deploy on any cloud platform or on-premise
 
 ---
 
@@ -28,16 +29,94 @@ Real-time LiDAR point cloud visualization with:
 - Zoom, pan, and reset controls
 - Connection status and statistics display
 
-**Data Flow:**
+### 2. Flight Telemetry
+Real-time flight controller and battery monitoring:
+- Attitude display (roll, pitch, yaw)
+- GPS position and satellite status
+- Battery voltage, current, temperature
+- Real-time updates via WebSocket
+
+---
+
+## Quick Start
+
+### Using Docker (Recommended)
+
+```bash
+# Clone the repository
+git clone https://github.com/your-org/quiver-hub.git
+cd quiver-hub
+
+# Copy environment file
+cp .env.example .env
+
+# Edit .env with your settings (especially JWT_SECRET)
+nano .env
+
+# Start with Docker Compose
+docker-compose up -d
 ```
-Raspberry Pi (RPLidar C1) 
-  → TCP Stream → 
-Companion Computer (Forwarder) 
-  → HTTP POST → 
-Quiver Hub (Web Server) 
-  → WebSocket → 
-Browser (Visualization)
+
+The application will be available at `http://localhost:3000`.
+
+### Manual Installation
+
+```bash
+# Prerequisites: Node.js 20+, MySQL/MariaDB, pnpm
+
+# Install dependencies
+pnpm install
+
+# Copy and configure environment
+cp .env.example .env
+# Edit .env with your database URL and JWT secret
+
+# Push database schema
+pnpm db:push
+
+# Start development server
+pnpm dev
+
+# Or build and run production
+pnpm build
+pnpm start
 ```
+
+---
+
+## Configuration
+
+Copy `.env.example` to `.env` and configure:
+
+```bash
+# Required
+DATABASE_URL=mysql://user:password@localhost:3306/quiver_hub
+JWT_SECRET=your-secure-secret-key
+
+# Optional - creates admin user on first startup
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=your-admin-password
+
+# Feature flags
+ALLOW_REGISTRATION=true
+
+# Application settings
+APP_NAME=Quiver Hub
+PORT=3000
+```
+
+### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATABASE_URL` | Yes | MySQL connection string |
+| `JWT_SECRET` | Yes | Secret for JWT token signing |
+| `ADMIN_EMAIL` | No | Initial admin user email |
+| `ADMIN_PASSWORD` | No | Initial admin user password |
+| `ALLOW_REGISTRATION` | No | Allow new user registration (default: true) |
+| `PORT` | No | Server port (default: 3000) |
+| `VITE_APP_TITLE` | No | Application title in UI |
+| `VITE_APP_LOGO` | No | Application logo URL |
 
 ---
 
@@ -53,9 +132,9 @@ Browser (Visualization)
 ### Backend
 - **Runtime**: Node.js + Express
 - **API**: tRPC 11 (type-safe RPC)
-- **Database**: MySQL/TiDB (via Drizzle ORM)
+- **Database**: MySQL/MariaDB (via Drizzle ORM)
 - **Real-time**: Socket.IO server
-- **Auth**: Manus OAuth
+- **Auth**: JWT-based local authentication
 
 ### Key Directories
 
@@ -66,177 +145,92 @@ client/
       AppSidebar.tsx          ← Sidebar navigation with app icons
       apps/
         LidarApp.tsx          ← RPLidar visualization app
+        TelemetryApp.tsx      ← Flight telemetry app
         AppStore.tsx          ← App marketplace UI
       PointCloudViewer.tsx    ← Canvas-based point cloud renderer
     pages/
       Home.tsx                ← Main hub layout
+      Login.tsx               ← Authentication page
 server/
   routers.ts                  ← tRPC API endpoints
+  rest-api.ts                 ← REST API for external integrations
   db.ts                       ← Database queries
   _core/
-    websocket.ts              ← Socket.IO server
+    auth.ts                   ← JWT authentication service
+    index.ts                  ← Express server setup
 drizzle/
-  schema.ts                   ← Database schema (drones, API keys, etc.)
+  schema.ts                   ← Database schema
 ```
 
 ---
 
-## Getting Started
+## Deployment
 
-### Prerequisites
-- Node.js 22+
-- MySQL/TiDB database
-- pnpm package manager
+### Docker Compose (Recommended)
 
-### Installation
+The included `docker-compose.yml` sets up both the application and MySQL:
 
 ```bash
-# Install dependencies
-pnpm install
+# Start services
+docker-compose up -d
 
-# Push database schema
-pnpm db:push
+# View logs
+docker-compose logs -f
 
-# Start development server
-pnpm dev
+# Stop services
+docker-compose down
 ```
 
-### Configuration
+### Docker (Application Only)
 
-Environment variables are managed through the Manus platform. Key variables:
-
-- `DATABASE_URL` - MySQL connection string
-- `JWT_SECRET` - Session signing secret
-- `VITE_APP_TITLE` - Browser tab title (set to "Quiver Hub")
-- `VITE_APP_LOGO` - Platform logo URL
-
-Update `VITE_APP_TITLE` via Management Dashboard → Settings → General.
-
----
-
-## Adding New Apps
-
-Quiver Hub is designed for easy extensibility. To add a new data pipeline app:
-
-### 1. Create App Component
-
-```tsx
-// client/src/components/apps/YourApp.tsx
-export default function YourApp() {
-  return (
-    <div className="h-full flex flex-col">
-      {/* App Header */}
-      <div className="border-b border-border bg-card px-6 py-4">
-        <h2 className="text-xl font-semibold">Your App Name</h2>
-        <p className="text-sm text-muted-foreground">App description</p>
-      </div>
-      
-      {/* App Content */}
-      <div className="flex-1 p-6 overflow-auto">
-        {/* Your visualization/UI here */}
-      </div>
-    </div>
-  );
-}
-```
-
-### 2. Register in Home.tsx
-
-```tsx
-import YourApp from "@/components/apps/YourApp";
-
-const apps: App[] = [
-  // ... existing apps
-  {
-    id: "your-app",
-    name: "Your App Name",
-    icon: YourIcon,
-    enabled: true,
-  },
-];
-
-// Add to renderApp() switch
-case "your-app":
-  return <YourApp />;
-```
-
-### 3. Add Backend Endpoints (if needed)
-
-```tsx
-// server/routers.ts
-yourApp: router({
-  getData: publicProcedure.query(async () => {
-    // Your data fetching logic
-  }),
-}),
-```
-
----
-
-## Future Development Direction
-
-### Phase 1: Core Platform Enhancement
-- **App Registry System** - Database-backed app installation/removal
-- **User Preferences** - Per-user app configuration and layout
-- **App Permissions** - Role-based access control for apps
-- **App Marketplace** - Browse and install apps from catalog
-
-### Phase 2: Additional Data Pipelines
-- **Flight Telemetry** - Real-time altitude, speed, battery, GPS tracking
-- **Camera Feeds** - Live video streaming with recording
-- **Mission Planner** - Waypoint-based autonomous flight planning
-- **Flight Analytics** - Historical data analysis and performance metrics
-
-### Phase 3: Advanced Features
-- **Multi-drone Dashboard** - Side-by-side comparison view
-- **Data Export** - CSV, JSON, KML export for all apps
-- **Alert System** - Configurable alerts for critical events
-- **API Gateway** - Unified REST API for external integrations
-
-### Phase 4: Collaboration & Sharing
-- **Team Workspaces** - Shared drone access for teams
-- **Live Sharing** - Share real-time views with stakeholders
-- **Report Generation** - Automated flight reports and summaries
-
----
-
-## RPLidar Integration
-
-### Hardware Setup
-
-**Components:**
-- RPLidar C1 (360° laser scanner)
-- Raspberry Pi (data collection)
-- Companion Computer (data forwarding)
-
-**Software Stack:**
-- `rplidar_c1.py` - Python library for RPLidar C1
-- `pointcloud_streamer.py` - TCP streamer on Raspberry Pi
-- `pointcloud_forwarder_heatmap.py` - HTTP forwarder on companion computer
-
-### Data Pipeline
-
-1. **Raspberry Pi** reads scan data from RPLidar C1 via serial
-2. **Streamer** converts to JSON and sends via TCP to companion computer
-3. **Forwarder** accumulates scans into heatmap and POSTs to Quiver Hub
-4. **Quiver Hub** broadcasts to connected browsers via WebSocket
-5. **Browser** renders point cloud on canvas in real-time
-
-### Configuration
-
-**Forwarder Environment:**
 ```bash
-WEB_SERVER_URL=https://your-hub.manus.space/api/rest/pointcloud/ingest
-API_KEY=your_api_key
-DRONE_ID=quiver_001
-UPDATE_INTERVAL=10  # Send every N scans
+# Build image
+docker build -t quiver-hub .
+
+# Run container
+docker run -d \
+  -p 3000:3000 \
+  -e DATABASE_URL="mysql://user:pass@host/db" \
+  -e JWT_SECRET="your-secret" \
+  quiver-hub
 ```
 
-**Key Features:**
-- Angle normalization (wraps 360°+)
-- Distance filtering (rejects spurious readings > 8m)
-- Heatmap accumulation (reduces HTTP overhead)
-- Full 360° scan validation
+### Cloud Platforms
+
+#### Railway / Render / Fly.io
+
+1. Connect your repository
+2. Set environment variables
+3. Deploy
+
+#### Kubernetes
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: quiver-hub
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+      - name: quiver-hub
+        image: your-registry/quiver-hub:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: quiver-secrets
+              key: database-url
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: quiver-secrets
+              key: jwt-secret
+```
 
 ---
 
@@ -245,7 +239,7 @@ UPDATE_INTERVAL=10  # Send every N scans
 ### REST Endpoints
 
 #### POST /api/rest/pointcloud/ingest
-Ingest point cloud data from external sources.
+Ingest point cloud data from external sources (e.g., Python scripts on companion computer).
 
 **Request Body:**
 ```json
@@ -273,104 +267,154 @@ Ingest point cloud data from external sources.
 }
 ```
 
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Point cloud data received"
-}
-```
+#### GET /api/rest/health
+Health check endpoint.
+
+#### GET /api/rest/pointcloud/latest/:droneId
+Polling fallback for latest scan data.
+
+### Authentication Endpoints
+
+#### POST /api/auth/register
+Register a new user.
+
+#### POST /api/auth/login
+Login with email/password.
+
+#### POST /api/auth/logout
+Clear session.
 
 ### WebSocket Events
 
 #### Client → Server
 - `subscribe` - Subscribe to drone updates
-  ```json
-  { "droneId": "quiver_001" }
-  ```
+- `unsubscribe` - Unsubscribe from drone
 
 #### Server → Client
 - `pointcloud` - New point cloud data
-  ```json
-  {
-    "droneId": "quiver_001",
-    "timestamp": "2025-11-18T12:00:00Z",
-    "points": [...],
-    "stats": {...}
-  }
-  ```
+- `telemetry` - New telemetry data
 
-### tRPC Procedures
+---
 
-#### `pointcloud.getDrones`
-Get list of connected drones.
+## Adding New Apps
 
-**Returns:**
-```typescript
-Array<{
-  id: number;
-  droneId: string;
-  name: string | null;
-  lastSeen: Date;
-}>
+### 1. Create App Component
+
+```tsx
+// client/src/components/apps/YourApp.tsx
+export default function YourApp() {
+  return (
+    <div className="h-full flex flex-col">
+      <div className="border-b border-border bg-card px-6 py-4">
+        <h2 className="text-xl font-semibold">Your App Name</h2>
+      </div>
+      <div className="flex-1 p-6 overflow-auto">
+        {/* Your visualization here */}
+      </div>
+    </div>
+  );
+}
+```
+
+### 2. Register in Home.tsx
+
+```tsx
+import YourApp from "@/components/apps/YourApp";
+
+const apps: App[] = [
+  // ... existing apps
+  { id: "your-app", name: "Your App", icon: YourIcon, enabled: true },
+];
+
+// Add to renderApp() switch
+case "your-app":
+  return <YourApp />;
+```
+
+### 3. Add Backend Endpoints (if needed)
+
+```tsx
+// server/routers.ts
+yourApp: router({
+  getData: publicProcedure.query(async () => {
+    // Your data fetching logic
+  }),
+}),
 ```
 
 ---
 
-## Deployment
+## Hardware Integration
 
-### Via Manus Platform
+### RPLidar Setup
 
-1. Create checkpoint via Management UI
-2. Click "Publish" in dashboard header
-3. Site is live at `https://your-project.manus.space`
+**Components:**
+- RPLidar C1 (360° laser scanner)
+- Raspberry Pi (data collection)
+- Companion Computer (data forwarding)
 
-### Custom Deployment
+**Data Flow:**
+```
+Raspberry Pi (RPLidar C1)
+  → TCP Stream →
+Companion Computer (Forwarder)
+  → HTTP POST →
+Quiver Hub (Web Server)
+  → WebSocket →
+Browser (Visualization)
+```
+
+**Forwarder Configuration:**
+```bash
+WEB_SERVER_URL=https://your-hub.example.com/api/rest/pointcloud/ingest
+API_KEY=your_api_key
+DRONE_ID=quiver_001
+UPDATE_INTERVAL=10
+```
+
+---
+
+## Development
+
+### Scripts
 
 ```bash
-# Build frontend
-cd client && pnpm build
-
-# Start production server
-NODE_ENV=production pnpm start
+pnpm dev          # Start development server
+pnpm build        # Build for production
+pnpm start        # Run production server
+pnpm check        # TypeScript type checking
+pnpm format       # Format code with Prettier
+pnpm test         # Run tests
+pnpm db:push      # Generate and apply migrations
 ```
 
-**Environment Requirements:**
-- Node.js 22+
-- MySQL/TiDB database
-- SSL certificate (for WebSocket)
+### Project Structure
 
----
-
-## Contributing
-
-Quiver Hub is designed for extensibility. Contributions welcome for:
-
-- New app modules (telemetry, cameras, sensors)
-- UI/UX improvements
-- Performance optimizations
-- Documentation enhancements
+```
+quiver-hub/
+├── client/              # React frontend
+├── server/              # Express backend
+├── drizzle/             # Database schema
+├── shared/              # Shared types
+├── Dockerfile           # Container build
+├── docker-compose.yml   # Multi-service setup
+└── .env.example         # Environment template
+```
 
 ---
 
 ## License
 
-MIT License - See LICENSE file for details
+MIT License - See LICENSE file for details.
+
+---
+
+## Contributing
+
+Contributions welcome! Please open an issue or pull request.
 
 ---
 
 ## Support
 
-For issues, questions, or feature requests:
-- GitHub Issues: [your-repo]/issues
-- Documentation: [your-docs-url]
-- Community: [your-community-url]
-
----
-
-## Acknowledgments
-
-- **RPLidar C1** by SLAMTEC
-- **shadcn/ui** for UI components
-- **tRPC** for type-safe APIs
-- **Manus Platform** for hosting and deployment
+- GitHub Issues: [Create an issue](https://github.com/your-org/quiver-hub/issues)

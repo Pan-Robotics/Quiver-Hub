@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  quiver-hub:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATABASE_URL=mysql://quiver:quiver_password@db:3306/quiver_hub
+      - JWT_SECRET=${JWT_SECRET:-your-secure-jwt-secret-change-in-production}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@example.com}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
+      - ALLOW_REGISTRATION=${ALLOW_REGISTRATION:-true}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - quiver-network
+
+  db:
+    image: mysql:8.0
+    environment:
+      - MYSQL_ROOT_PASSWORD=root_password
+      - MYSQL_DATABASE=quiver_hub
+      - MYSQL_USER=quiver
+      - MYSQL_PASSWORD=quiver_password
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_password"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - quiver-network
+
+volumes:
+  mysql_data:
+
+networks:
+  quiver-network:
+    driver: bridge
