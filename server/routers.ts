@@ -13,6 +13,20 @@ import {
   validateApiKey,
   insertTelemetry,
   getRecentTelemetry,
+  createApiKey,
+  getApiKeysForDrone,
+  revokeApiKey,
+  deleteApiKey,
+  reactivateApiKey,
+  updateDroneByDroneId,
+  updateApiKeyDescription,
+  deleteDrone,
+  createFlightLog,
+  getFlightLogsForDrone,
+  getAllFlightLogs,
+  getFlightLogById,
+  updateFlightLog,
+  deleteFlightLog,
 } from "./db";
 import { broadcastPointCloud, broadcastTelemetry } from "./websocket";
 import type { PointCloudMessage, TelemetryMessage } from "./websocket";
@@ -266,12 +280,108 @@ export const appRouter = router({
         return result;
       }),
 
+    // Get available data streams that apps can subscribe to
+    getAvailableStreams: publicProcedure.query(async () => {
+      // Built-in streams
+      const streams: Array<{
+        id: string;
+        name: string;
+        description: string;
+        event: string;
+        subscribeEvent: string;
+        subscribeParam: string;
+        fields: Record<string, { type: string; description: string }>;
+      }> = [
+        {
+          id: 'pointcloud',
+          name: 'RPLidar Point Cloud',
+          description: 'Real-time LiDAR scan data from connected drones',
+          event: 'pointcloud',
+          subscribeEvent: 'subscribe',
+          subscribeParam: 'drone_id',
+          fields: {
+            drone_id: { type: 'string', description: 'Drone identifier' },
+            timestamp: { type: 'string', description: 'ISO timestamp' },
+            points: { type: 'array', description: 'Array of {angle, distance, quality, x, y} points' },
+            'stats.point_count': { type: 'number', description: 'Total points in scan' },
+            'stats.valid_points': { type: 'number', description: 'Valid (non-zero) points' },
+            'stats.avg_distance': { type: 'number', description: 'Average distance in mm' },
+            'stats.avg_quality': { type: 'number', description: 'Average quality score' },
+            'stats.min_distance': { type: 'number', description: 'Minimum distance in mm' },
+            'stats.max_distance': { type: 'number', description: 'Maximum distance in mm' },
+          },
+        },
+        {
+          id: 'telemetry',
+          name: 'Flight Telemetry',
+          description: 'Attitude, position, GPS, and battery data from flight controller',
+          event: 'telemetry',
+          subscribeEvent: 'subscribe',
+          subscribeParam: 'drone_id',
+          fields: {
+            drone_id: { type: 'string', description: 'Drone identifier' },
+            timestamp: { type: 'string', description: 'ISO timestamp' },
+            'telemetry.attitude.roll_deg': { type: 'number', description: 'Roll angle in degrees' },
+            'telemetry.attitude.pitch_deg': { type: 'number', description: 'Pitch angle in degrees' },
+            'telemetry.attitude.yaw_deg': { type: 'number', description: 'Yaw angle in degrees' },
+            'telemetry.position.latitude_deg': { type: 'number', description: 'Latitude' },
+            'telemetry.position.longitude_deg': { type: 'number', description: 'Longitude' },
+            'telemetry.position.relative_altitude_m': { type: 'number', description: 'Relative altitude in meters' },
+            'telemetry.gps.num_satellites': { type: 'number', description: 'Number of GPS satellites' },
+            'telemetry.battery_fc.voltage_v': { type: 'number', description: 'Battery voltage' },
+            'telemetry.battery_fc.remaining_percent': { type: 'number', description: 'Battery remaining %' },
+            'telemetry.in_air': { type: 'boolean', description: 'Whether drone is in air' },
+          },
+        },
+        {
+          id: 'camera_status',
+          name: 'Camera Status',
+          description: 'Camera connection, recording, and gimbal status',
+          event: 'camera_status',
+          subscribeEvent: 'subscribe_camera',
+          subscribeParam: 'drone_id',
+          fields: {
+            drone_id: { type: 'string', description: 'Drone identifier' },
+            connected: { type: 'boolean', description: 'Camera connected' },
+            recording: { type: 'boolean', description: 'Currently recording' },
+            'attitude.yaw': { type: 'number', description: 'Gimbal yaw' },
+            'attitude.pitch': { type: 'number', description: 'Gimbal pitch' },
+            zoom_level: { type: 'number', description: 'Current zoom level' },
+          },
+        },
+      ];
+
+      // Also list custom apps that other apps can subscribe to
+      const customAppsList = await getAllCustomApps(true);
+      for (const app of customAppsList) {
+        const schema = app.dataSchema ? JSON.parse(app.dataSchema) : {};
+        streams.push({
+          id: `app:${app.appId}`,
+          name: `${app.name} (Custom App)`,
+          description: app.description || `Data stream from ${app.name}`,
+          event: 'app_data',
+          subscribeEvent: 'subscribe_app',
+          subscribeParam: app.appId,
+          fields: Object.fromEntries(
+            Object.entries(schema).map(([key, val]: [string, any]) => [
+              key,
+              { type: val.type || 'string', description: val.description || key },
+            ])
+          ),
+        });
+      }
+
+      return streams;
+    }),
+
     // Save a complete custom app (parser + UI schema)
     saveApp: protectedProcedure
       .input(
         z.object({
           name: z.string(),
           description: z.string().optional(),
+          dataSource: z.enum(['custom_endpoint', 'stream_subscription', 'passthrough']).optional().default('custom_endpoint'),
+          dataSourceConfig: z.any().optional(), // { streamId, streamEvent, subscribeEvent, subscribeParam, fieldMappings }
           parserCode: z.string(),
           dataSchema: z.any(), // JSON schema
           uiSchema: z.any(), // UI layout configuration
@@ -296,6 +406,8 @@ export const appRouter = router({
           name: input.name,
           description: input.description || null,
           icon: null,
+          dataSource: input.dataSource,
+          dataSourceConfig: input.dataSourceConfig ? JSON.stringify(input.dataSourceConfig) : null,
           parserCode: input.parserCode,
           dataSchema: JSON.stringify(input.dataSchema),
           uiSchema: JSON.stringify(input.uiSchema),
@@ -327,6 +439,8 @@ export const appRouter = router({
           createdAt: app.createdAt,
           uiSchema: app.uiSchema,
           dataSchema: app.dataSchema,
+          dataSource: app.dataSource,
+          dataSourceConfig: app.dataSourceConfig,
         }));
       }),
 
@@ -335,7 +449,7 @@ export const appRouter = router({
       .input(z.object({ appId: z.string() }))
       .mutation(async ({ input, ctx }) => {
         // List of built-in apps that don't exist in customApps table
-        const builtInApps = ["telemetry", "camera"];
+        const builtInApps = ["telemetry", "camera", "logs-ota", "mission", "analytics"];
         
         // For custom apps, verify they exist and are published
         if (!builtInApps.includes(input.appId)) {
@@ -408,6 +522,8 @@ export const appRouter = router({
           appId: z.string(),
           name: z.string().optional(),
           description: z.string().optional(),
+          dataSource: z.enum(['custom_endpoint', 'stream_subscription', 'passthrough']).optional(),
+          dataSourceConfig: z.any().optional(),
           parserCode: z.string().optional(),
           dataSchema: z.any().optional(),
           uiSchema: z.any().optional(),
@@ -434,6 +550,8 @@ export const appRouter = router({
         const updates: any = {};
         if (input.name) updates.name = input.name;
         if (input.description !== undefined) updates.description = input.description;
+        if (input.dataSource) updates.dataSource = input.dataSource;
+        if (input.dataSourceConfig !== undefined) updates.dataSourceConfig = JSON.stringify(input.dataSourceConfig);
         if (input.parserCode) updates.parserCode = input.parserCode;
         if (input.dataSchema) updates.dataSchema = JSON.stringify(input.dataSchema);
         if (input.uiSchema) updates.uiSchema = JSON.stringify(input.uiSchema);
@@ -541,6 +659,359 @@ export const appRouter = router({
       const drones = await getAllDrones();
       return { drones };
     }),
+
+    // Get API keys for a drone
+    getApiKeys: protectedProcedure
+      .input(z.object({ droneId: z.string() }))
+      .query(async ({ input }) => {
+        const keys = await getApiKeysForDrone(input.droneId);
+        return { keys };
+      }),
+
+    // Generate a new API key for a drone
+    generateApiKey: protectedProcedure
+      .input(z.object({
+        droneId: z.string(),
+        description: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        // Ensure the drone exists (upsert it)
+        await upsertDrone({
+          droneId: input.droneId,
+          lastSeen: new Date(),
+          isActive: true,
+        });
+
+        const apiKey = await createApiKey(input.droneId, input.description);
+        if (!apiKey) {
+          throw new Error("Failed to create API key");
+        }
+        return { apiKey };
+      }),
+
+    // Revoke (deactivate) an API key
+    revokeApiKey: protectedProcedure
+      .input(z.object({ keyId: z.number() }))
+      .mutation(async ({ input }) => {
+        await revokeApiKey(input.keyId);
+        return { success: true };
+      }),
+
+    // Reactivate a revoked API key
+    reactivateApiKey: protectedProcedure
+      .input(z.object({ keyId: z.number() }))
+      .mutation(async ({ input }) => {
+        await reactivateApiKey(input.keyId);
+        return { success: true };
+      }),
+
+    // Delete an API key permanently
+    deleteApiKey: protectedProcedure
+      .input(z.object({ keyId: z.number() }))
+      .mutation(async ({ input }) => {
+        await deleteApiKey(input.keyId);
+        return { success: true };
+      }),
+
+    // Register a new drone
+    register: protectedProcedure
+      .input(z.object({
+        droneId: z.string(),
+        name: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const drone = await upsertDrone({
+          droneId: input.droneId,
+          name: input.name || null,
+          lastSeen: new Date(),
+          isActive: true,
+        });
+        return { drone };
+      }),
+
+    // Update drone info (name, droneId)
+    update: protectedProcedure
+      .input(z.object({
+        currentDroneId: z.string(),
+        droneId: z.string().optional(),
+        name: z.string().nullable().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const updates: { name?: string | null; droneId?: string } = {};
+        if (input.name !== undefined) updates.name = input.name;
+        if (input.droneId !== undefined && input.droneId !== input.currentDroneId) {
+          // Check if the new droneId is already taken
+          const existing = await getDroneByDroneId(input.droneId);
+          if (existing) {
+            throw new Error(`Drone ID "${input.droneId}" is already in use`);
+          }
+          updates.droneId = input.droneId;
+        }
+        const drone = await updateDroneByDroneId(input.currentDroneId, updates);
+        if (!drone) {
+          throw new Error("Failed to update drone");
+        }
+        return { drone };
+      }),
+
+    // Update API key description
+    updateApiKeyDescription: protectedProcedure
+      .input(z.object({
+        keyId: z.number(),
+        description: z.string().nullable(),
+      }))
+      .mutation(async ({ input }) => {
+        const success = await updateApiKeyDescription(input.keyId, input.description);
+        if (!success) {
+          throw new Error("Failed to update API key description");
+        }
+        return { success: true };
+      }),
+
+    // Delete a drone and all associated data (cascading)
+    delete: protectedProcedure
+      .input(z.object({
+        droneId: z.string(),
+        confirmDroneId: z.string(), // Must match droneId as confirmation safeguard
+      }))
+      .mutation(async ({ input }) => {
+        if (input.droneId !== input.confirmDroneId) {
+          throw new Error("Drone ID confirmation does not match. Deletion aborted.");
+        }
+
+        // Verify the drone exists
+        const drone = await getDroneByDroneId(input.droneId);
+        if (!drone) {
+          throw new Error(`Drone "${input.droneId}" not found`);
+        }
+
+        const result = await deleteDrone(input.droneId);
+        if (!result.deleted) {
+          throw new Error("Failed to delete drone");
+        }
+
+        return {
+          success: true,
+          droneId: input.droneId,
+          deletedCounts: result.counts,
+        };
+      }),
+
+    // Test connection: validates API key and tests all endpoints
+    testConnection: protectedProcedure
+      .input(z.object({
+        droneId: z.string(),
+        apiKey: z.string(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const results: {
+          name: string;
+          endpoint: string;
+          status: "pass" | "fail" | "skip";
+          latency_ms: number;
+          message: string;
+        }[] = [];
+
+        // Get the base URL from the request
+        const protocol = ctx.req.headers["x-forwarded-proto"] || ctx.req.protocol || "https";
+        const host = ctx.req.headers["x-forwarded-host"] || ctx.req.headers.host || "localhost";
+        const baseUrl = `${protocol}://${host}`;
+
+        // Test 1: Health endpoint
+        const healthStart = Date.now();
+        try {
+          const healthRes = await fetch(`${baseUrl}/api/rest/health`);
+          const healthData = await healthRes.json();
+          results.push({
+            name: "Health Check",
+            endpoint: "/api/rest/health",
+            status: healthData.success ? "pass" : "fail",
+            latency_ms: Date.now() - healthStart,
+            message: healthData.success ? "Hub is healthy" : "Hub health check failed",
+          });
+        } catch (e) {
+          results.push({
+            name: "Health Check",
+            endpoint: "/api/rest/health",
+            status: "fail",
+            latency_ms: Date.now() - healthStart,
+            message: e instanceof Error ? e.message : "Connection failed",
+          });
+        }
+
+        // Test 2: API Key Validation via test-connection endpoint
+        const authStart = Date.now();
+        try {
+          const authRes = await fetch(`${baseUrl}/api/rest/test-connection`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ api_key: input.apiKey, drone_id: input.droneId }),
+          });
+          const authData = await authRes.json();
+          results.push({
+            name: "API Key Authentication",
+            endpoint: "/api/rest/test-connection",
+            status: authData.success ? "pass" : "fail",
+            latency_ms: Date.now() - authStart,
+            message: authData.success
+              ? `Key verified (${authData.api_key_description || "no description"})`
+              : authData.error || "Authentication failed",
+          });
+        } catch (e) {
+          results.push({
+            name: "API Key Authentication",
+            endpoint: "/api/rest/test-connection",
+            status: "fail",
+            latency_ms: Date.now() - authStart,
+            message: e instanceof Error ? e.message : "Connection failed",
+          });
+        }
+
+        // Test 3: Point Cloud endpoint (dry-run validation only)
+        const pcStart = Date.now();
+        try {
+          // Send a minimal request that will fail validation but prove the endpoint is reachable
+          const pcRes = await fetch(`${baseUrl}/api/rest/pointcloud/ingest`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ api_key: input.apiKey, drone_id: input.droneId }),
+          });
+          const pcData = await pcRes.json();
+          // A 400 with "Missing required fields" means the endpoint is reachable and auth passed
+          if (pcRes.status === 400 && pcData.error?.includes("Missing required fields")) {
+            results.push({
+              name: "Point Cloud Ingest",
+              endpoint: "/api/rest/pointcloud/ingest",
+              status: "pass",
+              latency_ms: Date.now() - pcStart,
+              message: "Endpoint reachable, auth valid (dry-run)",
+            });
+          } else if (pcRes.status === 401 || pcRes.status === 403) {
+            results.push({
+              name: "Point Cloud Ingest",
+              endpoint: "/api/rest/pointcloud/ingest",
+              status: "fail",
+              latency_ms: Date.now() - pcStart,
+              message: pcData.error || "Authentication failed",
+            });
+          } else {
+            results.push({
+              name: "Point Cloud Ingest",
+              endpoint: "/api/rest/pointcloud/ingest",
+              status: "pass",
+              latency_ms: Date.now() - pcStart,
+              message: "Endpoint reachable",
+            });
+          }
+        } catch (e) {
+          results.push({
+            name: "Point Cloud Ingest",
+            endpoint: "/api/rest/pointcloud/ingest",
+            status: "fail",
+            latency_ms: Date.now() - pcStart,
+            message: e instanceof Error ? e.message : "Connection failed",
+          });
+        }
+
+        // Test 4: Telemetry endpoint (dry-run)
+        const telStart = Date.now();
+        try {
+          const telRes = await fetch(`${baseUrl}/api/rest/telemetry/ingest`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ api_key: input.apiKey, drone_id: input.droneId }),
+          });
+          const telData = await telRes.json();
+          if (telRes.status === 400 && telData.error?.includes("Missing required fields")) {
+            results.push({
+              name: "Telemetry Ingest",
+              endpoint: "/api/rest/telemetry/ingest",
+              status: "pass",
+              latency_ms: Date.now() - telStart,
+              message: "Endpoint reachable, auth valid (dry-run)",
+            });
+          } else if (telRes.status === 401 || telRes.status === 403) {
+            results.push({
+              name: "Telemetry Ingest",
+              endpoint: "/api/rest/telemetry/ingest",
+              status: "fail",
+              latency_ms: Date.now() - telStart,
+              message: telData.error || "Authentication failed",
+            });
+          } else {
+            results.push({
+              name: "Telemetry Ingest",
+              endpoint: "/api/rest/telemetry/ingest",
+              status: "pass",
+              latency_ms: Date.now() - telStart,
+              message: "Endpoint reachable",
+            });
+          }
+        } catch (e) {
+          results.push({
+            name: "Telemetry Ingest",
+            endpoint: "/api/rest/telemetry/ingest",
+            status: "fail",
+            latency_ms: Date.now() - telStart,
+            message: e instanceof Error ? e.message : "Connection failed",
+          });
+        }
+
+        // Test 5: Camera endpoint (dry-run)
+        const camStart = Date.now();
+        try {
+          const camRes = await fetch(`${baseUrl}/api/rest/camera/status`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ api_key: input.apiKey, drone_id: input.droneId }),
+          });
+          const camData = await camRes.json();
+          if (camRes.status === 400 && camData.error?.includes("Missing required fields")) {
+            results.push({
+              name: "Camera Status",
+              endpoint: "/api/rest/camera/status",
+              status: "pass",
+              latency_ms: Date.now() - camStart,
+              message: "Endpoint reachable, auth valid (dry-run)",
+            });
+          } else if (camRes.status === 401 || camRes.status === 403) {
+            results.push({
+              name: "Camera Status",
+              endpoint: "/api/rest/camera/status",
+              status: "fail",
+              latency_ms: Date.now() - camStart,
+              message: camData.error || "Authentication failed",
+            });
+          } else {
+            results.push({
+              name: "Camera Status",
+              endpoint: "/api/rest/camera/status",
+              status: "pass",
+              latency_ms: Date.now() - camStart,
+              message: "Endpoint reachable",
+            });
+          }
+        } catch (e) {
+          results.push({
+            name: "Camera Status",
+            endpoint: "/api/rest/camera/status",
+            status: "fail",
+            latency_ms: Date.now() - camStart,
+            message: e instanceof Error ? e.message : "Connection failed",
+          });
+        }
+
+        const allPassed = results.every((r) => r.status === "pass");
+        const totalLatency = results.reduce((sum, r) => sum + r.latency_ms, 0);
+
+        return {
+          success: allPassed,
+          drone_id: input.droneId,
+          total_latency_ms: totalLatency,
+          tests: results,
+          tested_at: new Date().toISOString(),
+        };
+      }),
   }),
 
   // Drone job management for two-way communication
@@ -736,6 +1207,154 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         await deleteDroneFile(input.fileId);
         return { success: true };
+      }),
+  }),
+
+  // ─── Flight Analytics ────────────────────────────────────────────────
+  flightLogs: router({
+    // List all flight logs (optionally filtered by drone)
+    list: protectedProcedure
+      .input(z.object({ droneId: z.string().optional() }).optional())
+      .query(async ({ input }) => {
+        if (input?.droneId) {
+          return await getFlightLogsForDrone(input.droneId);
+        }
+        return await getAllFlightLogs();
+      }),
+
+    // Get a single flight log by ID
+    getById: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const log = await getFlightLogById(input.id);
+        if (!log) throw new Error("Flight log not found");
+        return log;
+      }),
+
+    // Upload a flight log (manual upload from UI)
+    upload: protectedProcedure
+      .input(z.object({
+        droneId: z.string(),
+        filename: z.string(),
+        content: z.string(), // base64 encoded
+        description: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        const buffer = Buffer.from(input.content, "base64");
+        const fileSize = buffer.length;
+
+        // Determine format from extension
+        const ext = input.filename.toLowerCase().split(".").pop();
+        const format = ext === "log" ? "log" as const : "bin" as const;
+
+        // Upload to S3
+        const fileKey = `flight-logs/${input.droneId}/${nanoid()}-${input.filename}`;
+        const { url } = await storagePut(fileKey, buffer, "application/octet-stream");
+
+        // Store metadata in DB
+        await createFlightLog({
+          droneId: input.droneId,
+          filename: input.filename,
+          fileSize,
+          storageKey: fileKey,
+          url,
+          format,
+          description: input.description || null,
+          uploadSource: "manual",
+          uploadedBy: ctx.user.id,
+        });
+
+        return { success: true, url, filename: input.filename };
+      }),
+
+    // Update flight log metadata (description, notes, media)
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        description: z.string().nullable().optional(),
+        notesUrl: z.string().nullable().optional(),
+        mediaUrls: z.array(z.string()).nullable().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const updates: { description?: string | null; notesUrl?: string | null; mediaUrls?: string[] | null } = {};
+        if (input.description !== undefined) updates.description = input.description;
+        if (input.notesUrl !== undefined) updates.notesUrl = input.notesUrl;
+        if (input.mediaUrls !== undefined) updates.mediaUrls = input.mediaUrls;
+
+        const success = await updateFlightLog(input.id, updates);
+        if (!success) throw new Error("Failed to update flight log");
+        return { success: true };
+      }),
+
+    // Delete a flight log
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        const success = await deleteFlightLog(input.id);
+        if (!success) throw new Error("Failed to delete flight log");
+        return { success: true };
+      }),
+
+    // Upload notes markdown file for a flight log
+    uploadNotes: protectedProcedure
+      .input(z.object({
+        logId: z.number(),
+        content: z.string(), // raw markdown text
+        filename: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const log = await getFlightLogById(input.logId);
+        if (!log) throw new Error("Flight log not found");
+
+        const noteKey = `flight-logs/${log.droneId}/notes/${nanoid()}-${input.filename || "notes.md"}`;
+        const { url } = await storagePut(noteKey, Buffer.from(input.content, "utf-8"), "text/markdown");
+
+        await updateFlightLog(input.logId, { notesUrl: url });
+        return { success: true, url };
+      }),
+
+    // Download flight log binary data (proxy to avoid compression issues)
+    downloadBinary: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const log = await getFlightLogById(input.id);
+        if (!log) throw new Error("Flight log not found");
+        if (!log.url) throw new Error("Flight log has no file URL");
+
+        // Fetch the file from S3
+        const response = await fetch(log.url);
+        if (!response.ok) throw new Error(`Failed to download file: ${response.statusText}`);
+        const buffer = Buffer.from(await response.arrayBuffer());
+
+        // Return as base64 to avoid proxy compression mangling the binary data
+        return {
+          data: buffer.toString("base64"),
+          size: buffer.length,
+          filename: log.filename,
+        };
+      }),
+
+    // Upload media files for a flight log
+    uploadMedia: protectedProcedure
+      .input(z.object({
+        logId: z.number(),
+        filename: z.string(),
+        content: z.string(), // base64 encoded
+        mimeType: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const log = await getFlightLogById(input.logId);
+        if (!log) throw new Error("Flight log not found");
+
+        const buffer = Buffer.from(input.content, "base64");
+        const mediaKey = `flight-logs/${log.droneId}/media/${nanoid()}-${input.filename}`;
+        const { url } = await storagePut(mediaKey, buffer, input.mimeType || "application/octet-stream");
+
+        // Append to existing media URLs
+        const existingMedia = (log.mediaUrls as string[] | null) || [];
+        await updateFlightLog(input.logId, { mediaUrls: [...existingMedia, url] });
+
+        return { success: true, url };
       }),
   }),
 });

@@ -2,7 +2,9 @@ import { useState } from "react";
 // Quiver Hub branding
 const HUB_TITLE = "Quiver Hub";
 const HUB_SUBTITLE = "UAV Data Pipeline Platform";
-import { Radio, Gauge, Package, Sparkles, Settings, Camera } from "lucide-react";
+const QUIVER_LOGO = "https://files.manuscdn.com/user_upload_by_module/session_file/104102086/pvNNZkXlGeFWOKMU.png";
+import { Radio, Gauge, Package, Sparkles, Settings, Camera, ScrollText, Map, BarChart3 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import AppSidebar, { App } from "@/components/AppSidebar";
 import LidarApp from "@/components/apps/LidarApp";
 import TelemetryApp from "@/components/apps/TelemetryApp";
@@ -11,6 +13,7 @@ import DroneConfig from "@/pages/DroneConfig";
 import AppStore from "@/components/apps/AppStore";
 import AppRenderer from "@/components/apps/AppRenderer";
 import AppManagement from "@/pages/AppManagement";
+import FlightAnalyticsApp from "@/components/apps/FlightAnalyticsApp";
 import { trpc } from "@/lib/trpc";
 
 export default function Home() {
@@ -26,6 +29,9 @@ export default function Home() {
   const builtInAppMetadata: Record<string, { name: string; icon: React.ElementType<{ size?: number }> }> = {
     telemetry: { name: "Flight Telemetry", icon: Gauge },
     camera: { name: "Camera Feed", icon: Camera },
+    "logs-ota": { name: "Logs & OTA Updates", icon: ScrollText },
+    mission: { name: "Mission Planner", icon: Map },
+    analytics: { name: "Flight Analytics", icon: BarChart3 },
   };
 
   // Get list of installed app IDs
@@ -39,6 +45,10 @@ export default function Home() {
       icon: Radio,
       enabled: true,
     },
+  ];
+
+  // Bottom-pinned apps (shown just above the + button)
+  const bottomApps: App[] = [
     {
       id: "drone-config",
       name: "Drone Configuration",
@@ -113,9 +123,33 @@ export default function Home() {
       case "camera":
         return <CameraFeedApp />;
       case "telemetry":
-        return <TelemetryApp droneId="quiver_001" />;
+        return <TelemetryApp />;
       case "drone-config":
         return <DroneConfig />;
+      case "logs-ota":
+        return (
+          <div className="h-full flex items-center justify-center">
+            <div className="text-center">
+              <ScrollText className="mx-auto mb-4 text-muted-foreground" size={64} />
+              <h2 className="text-2xl font-semibold mb-2">Logs & OTA Updates</h2>
+              <p className="text-muted-foreground mb-1">Remote log streaming, system diagnostics, and over-the-air firmware updates.</p>
+              <Badge variant="secondary" className="mt-3">Coming Soon</Badge>
+            </div>
+          </div>
+        );
+      case "mission":
+        return (
+          <div className="h-full flex items-center justify-center">
+            <div className="text-center">
+              <Map className="mx-auto mb-4 text-muted-foreground" size={64} />
+              <h2 className="text-2xl font-semibold mb-2">Mission Planner</h2>
+              <p className="text-muted-foreground mb-1">Plan and execute autonomous flight missions with waypoints, geofencing, and return-to-home.</p>
+              <Badge variant="secondary" className="mt-3">Coming Soon</Badge>
+            </div>
+          </div>
+        );
+      case "analytics":
+        return <FlightAnalyticsApp />;
       default:
         return (
           <div className="h-full flex items-center justify-center">
@@ -134,6 +168,7 @@ export default function Home() {
       {/* Sidebar */}
       <AppSidebar
         apps={apps}
+        bottomApps={bottomApps}
         activeAppId={showAppStore ? "store" : activeAppId}
         onAppChange={(appId) => {
           setShowAppStore(false);
@@ -149,7 +184,7 @@ export default function Home() {
         <header className="border-b border-border bg-card">
           <div className="px-6 py-4">
             <div className="flex items-center gap-3">
-              <Radio className="text-primary" size={28} />
+              <img src={QUIVER_LOGO} alt="Quiver Hub" className="h-8 w-8 object-contain" />
               <div>
                 <h1 className="text-xl font-bold">{HUB_TITLE}</h1>
                 <p className="text-xs text-muted-foreground">{HUB_SUBTITLE}</p>

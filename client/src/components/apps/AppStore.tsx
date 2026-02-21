@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Package, Download, Star, TrendingUp, Plus, Sparkles, Camera } from "lucide-react";
+import { Package, Download, Star, TrendingUp, Plus, Sparkles, Camera, ScrollText, Map, BarChart3 } from "lucide-react";
 import AppBuilder from "./AppBuilder";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
@@ -87,17 +87,25 @@ export default function AppStore({ onInstallApp, onManageApps, editingAppId, onC
     {
       id: "mission",
       name: "Mission Planner",
-      description: "Plan and execute autonomous flight missions with waypoints",
+      description: "Plan and execute autonomous flight missions with waypoints, geofencing, and return-to-home",
       category: "Planning",
-      icon: Package,
+      icon: Map,
       installed: false,
     },
     {
       id: "analytics",
       name: "Flight Analytics",
-      description: "Historical flight data analysis and performance metrics",
+      description: "Upload and analyze ArduPilot .BIN/.LOG flight logs with interactive charts for attitude, battery, vibration, GPS, ESC, and more",
       category: "Analytics",
-      icon: Package,
+      icon: BarChart3,
+      installed: false,
+    },
+    {
+      id: "logs-ota",
+      name: "Logs & OTA Updates",
+      description: "Remote log streaming, system diagnostics, and over-the-air firmware updates for companion computers",
+      category: "Maintenance",
+      icon: ScrollText,
       installed: false,
     },
   ];
@@ -173,7 +181,7 @@ export default function AppStore({ onInstallApp, onManageApps, editingAppId, onC
           {storeApps.map((app) => {
             const Icon = app.icon;
             const isInstalled = isAppInstalled(app.id);
-            const isInstallable = app.id === "telemetry" || app.id === "camera"; // Telemetry and Camera Feed are installable
+            const isInstallable = app.id === "telemetry" || app.id === "camera" || app.id === "analytics"; // Telemetry, Camera Feed, and Flight Analytics are installable
             
             return (
               <Card key={app.id} className="p-6 hover:shadow-lg transition-shadow">

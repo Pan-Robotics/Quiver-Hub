@@ -697,3 +697,350 @@
 - [x] Add WebSocket bridge for camera commands from Quiver Hub
 - [x] Create systemd service files for deployment
 - [x] Write deployment documentation
+
+## Point Cloud Widget Verification
+
+- [x] Review LidarApp and PointCloudCanvas data format compatibility
+- [x] Test with mock data (demo mode) to verify rendering matches original
+- [x] Fix rendering issue: added 2D Canvas fallback renderer (PointCloudCanvas2D)
+- [x] Verify data pipeline: mock generator → convertTo3D → renderer
+- [x] Add 2D/3D render mode toggle to LidarApp header
+- [x] Write 22 unit tests for mock data generator and data transformation
+- [x] All tests passing (format compatibility, data ranges, obstacle simulation)
+- [ ] Query database for existing scan data to use as replay (deferred - no scans in DB yet)
+
+## Update UI Builder Canvas Widget to Match RPLidar App
+
+- [x] Add PointCloudCanvas2D import to AppRenderer
+- [x] Add 2D/3D render mode toggle to canvas widget in AppRenderer
+- [x] Default to 2D mode for reliability
+- [x] Match point size and config defaults to LidarApp (2D: 3, 3D: 4)
+- [x] Handle string data parsing in 2D renderer
+- [x] Verify compilation (no TypeScript errors)
+- [x] Write/update tests (16 tests passing)
+
+## Test UI Builder Canvas Widget with Live RPLidar Data
+
+- [x] Understand custom app data flow (AppRenderer, WebSocket, REST)
+- [x] Create custom app in database with canvas widget UI schema (rplidar-pointcloud-viewer)
+- [x] Wire custom app to receive RPLidar point cloud data via broadcastAppData in REST ingest
+- [x] Install custom app and verify it renders live data in AppRenderer (403 points, quiver_001)
+- [x] Confirm 2D/3D toggle works in the custom app context
+- [x] Write 17 integration tests for data broadcast pipeline (all passing)
+- [x] All 66 tests passing across 4 test files
+
+## App Builder Developer Experience Audit & Expansion
+
+### Phase 1: Audit Current Workflow
+- [x] Map the complete App Builder user-facing workflow (step by step)
+- [x] Test creating a point cloud viewer app through the UI
+- [x] Document all limitations and friction points (APP_BUILDER_AUDIT.md)
+- [x] Identify what developers can't do today that they should be able to
+
+### Phase 2: Data Source Configuration (P0)
+- [x] Add dataSource field to customApps DB schema (type: 'custom_endpoint' | 'stream_subscription' | 'passthrough')
+- [x] Add dataSourceConfig field to store stream subscription details
+- [x] Run database migration
+- [x] Update AppBuilder UI: add Data Source step before parser step
+- [x] Add stream picker UI (list available streams: pointcloud, telemetry, camera, custom apps)
+- [x] Add field mapping UI for stream subscriptions (auto-mapped from stream fields)
+- [x] Make parser step optional when data source is 'stream_subscription' or 'passthrough'
+- [x] Update AppRenderer to handle stream subscriptions (subscribe_stream WebSocket event)
+- [x] Update saveApp/updateApp backend to store dataSource config
+- [x] Update restApi.ts to support passthrough mode (no parser execution)
+- [ ] Add enhanced canvas widget config to UI Builder properties panel
+- [x] Test: create LiDAR Stats Monitor app via UI that subscribes to RPLidar stream - WORKING
+- [ ] Test: create passthrough app via UI
+- [x] Test: existing custom_endpoint apps still work (RPLidar Point Cloud Viewer)
+- [x] Write unit tests for new data source logic (29 stream-subscription tests)
+- [x] All 95 tests passing across 5 test files
+
+## Sidebar Reorder
+
+- [x] Move Drone Configuration icon to just above the App Store + icon in sidebar
+
+## Bug Fix: Failed to fetch in LidarApp
+
+- [x] Fix "Failed to fetch" error at LidarApp.tsx line 183 (added 2s debounce, silenced transient errors)
+- [x] Reverted polling interval back to 100ms per user request
+
+## Multi-Stream Subscription for App Builder
+
+- [x] Design multi-stream data model (streams array + fieldMappings with streamId:fieldPath format)
+- [x] Update dataSourceConfig schema to support array of stream subscriptions with selected fields
+- [x] Update getAvailableStreams backend to return field metadata
+- [x] Update AppBuilder UI: multi-stream picker with checkboxes for individual fields
+- [x] Show combined field list from all selected streams for widget data binding
+- [x] Handle field name conflicts across streams (auto-prefix with stream name + alias support)
+- [x] Update AppRenderer to subscribe to multiple WebSocket stream rooms (with deduplication)
+- [x] Merge incoming data from multiple streams into unified widget data object
+- [x] Update saveApp to validate multi-stream config (z.any() accepts both formats)
+- [x] Fix app: prefixed stream ID parsing in field mappings (parseFieldMapping helper)
+- [ ] Test: create app subscribing to RPLidar + Telemetry streams with mixed fields (via UI)
+- [x] Test: existing single-stream apps still work (backward compatibility - verified in tests)
+- [x] Write unit tests for multi-stream data merging (22 tests in multi-stream.test.ts)
+- [x] All 117 tests passing across 6 test files
+
+## Bug Fix: tRPC Failed to fetch error
+
+- [x] Fix tRPC "Failed to fetch" error on main page (added retry logic for transient network errors, silent warnings instead of error popups)
+
+## App Management Improvements
+
+- [x] Remove Edit button from built-in apps (telemetry, camera) in App Management
+- [x] Remove Edit button from core apps (lidar) in App Management view
+- [x] Improve View modal to show appropriate information for all app types
+- [x] Built-in apps view: show app name, description, type, data streams info
+- [x] Custom apps view: show full details like rplidar-pointcloud-viewer (parser code, data schema, UI schema, data source config)
+- [x] Add proper metadata display for built-in apps (Flight Telemetry, Camera Feed, RPLidar)
+
+## Drone Configuration - API Keys & Connection Info
+
+- [x] Add API key management to DroneConfig (generate, view, revoke keys per drone)
+- [x] Add backend tRPC procedures for API key CRUD (create, list, revoke)
+- [x] Add db.ts helper functions for API key operations (createApiKey, getApiKeysForDrone, revokeApiKey)
+- [x] Display connection info per drone (.env format): base URL, REST endpoints, WebSocket URL, drone_id
+- [x] Show copyable .env snippet with all required connection variables
+- [x] Prominently feature API key section at top of drone config page
+- [x] Add copy-to-clipboard for API keys and connection URLs
+
+## Drone & API Key Edit Features
+
+- [x] Add updateDrone db function (update name, droneId)
+- [x] Add updateApiKeyDescription db function (update description)
+- [x] Add drones.update tRPC procedure for editing drone info
+- [x] Add drones.updateApiKeyDescription tRPC procedure for editing API key description
+- [x] Add Edit Drone dialog in DroneConfig UI (edit name, droneId with validation)
+- [x] Add Edit button on each API key row to modify description inline or via dialog
+- [x] Write vitest tests for new update functions and procedures
+
+## Drone Selector on All Built-in Apps
+
+- [x] Add drone selector dropdown to TelemetryApp (currently hardcoded to quiver_001)
+- [x] Add drone selector dropdown to CameraFeedApp (currently hardcoded to quiver_001)
+- [x] Update Home.tsx to no longer pass hardcoded droneId to TelemetryApp
+- [x] Ensure LidarApp drone selector is consistent with other apps (already has one)
+- [x] Write vitest tests for drone selector integration
+
+## Persist Drone Selection to localStorage
+
+- [x] Create shared useDroneSelection hook with localStorage persistence
+- [x] Integrate hook into LidarApp (replace inline state + useEffect)
+- [x] Integrate hook into TelemetryApp (replace inline state + useEffect)
+- [x] Integrate hook into CameraFeedApp (replace inline state + useEffect)
+- [x] Ensure selection persists across app switches and page reloads
+- [x] Write vitest tests for the shared hook and localStorage behavior
+
+## Per-App Drone Selection Persistence
+
+- [x] Update useDroneSelection hook to accept an appId parameter for per-app localStorage keys
+- [x] Update LidarApp to pass its own appId (e.g. "lidar")
+- [x] Update TelemetryApp to pass its own appId (e.g. "telemetry")
+- [x] Update CameraFeedApp to pass its own appId (e.g. "camera")
+- [x] Update tests to reflect per-app key behavior
+
+## Bug: Telemetry and Camera sharing drone selection
+
+- [x] Investigate and fix Flight Telemetry and Camera Feed sharing drone selection (confirmed working - per-app keys are independent, initial auto-select picks same first drone which is expected)
+
+## Test Connection Feature in Drone Config
+
+- [x] Create backend REST endpoint /api/rest/test-connection that validates API key and returns connectivity status
+- [x] Add tRPC procedure for test connection that tests all endpoints (pointcloud, telemetry, camera) for a given drone
+- [x] Add Test Connection button to Drone Config UI (per-drone, uses active API key)
+- [x] Show test results with pass/fail for each endpoint (pointcloud ingest, telemetry ingest, camera, WebSocket)
+- [x] Display latency/response time for each endpoint test
+- [x] Write vitest tests for the test connection feature
+
+## Delete Drone Feature
+
+- [x] Add deleteDrone db function with cascading deletes (API keys, scans, telemetry, jobs, files)
+- [x] Add drones.delete tRPC procedure with confirmation safeguard
+- [x] Add Delete Drone button to DroneConfig header with confirmation dialog
+- [x] After deletion, auto-select another drone or show empty state
+- [x] Write vitest tests for cascading delete
+
+## Logs and OTA Updates Placeholder App
+
+- [x] Add "Logs and OTA Updates" as a coming soon built-in app placeholder
+- [x] Add app definition to builtInApps list in routers.ts
+- [x] Add placeholder component that shows "Coming Soon" message
+- [x] Add appropriate icon and sidebar entry
+- [x] Write vitest tests
+
+## Mission Planner & Flight Analytics Coming Soon Placeholders
+
+- [x] Add Mission Planner to BUILT_IN_APP_INFO in AppManagement.tsx (features, data streams, icon)
+- [x] Add Flight Analytics to BUILT_IN_APP_INFO in AppManagement.tsx (features, data streams, icon)
+- [x] Add both to builtInAppMetadata in Home.tsx with proper icons
+- [x] Add Coming Soon placeholder views in Home.tsx renderApp switch
+- [x] Add both to builtInApps list in routers.ts for install/uninstall support
+- [x] Update AppStore.tsx to use proper icons (replace Package placeholders)
+- [x] Write vitest tests for both apps across all integration points
+
+## Flight Analytics App Implementation
+
+### Phase 1: Research & Setup
+- [x] Research JS/TS MAVLink .BIN parser libraries (JsDataflashParser)
+- [x] Install chosen parser library (copied JsDataflashParser + recharts)
+
+### Phase 2: Schema & Parser
+- [x] Create flightLogs table in drizzle schema
+- [x] Create flightAnalysisMedia table in drizzle schema (deferred - not needed for MVP)
+- [x] Run db:push for new tables
+- [x] Port parse_log function - using JsDataflashParser client-side for .BIN files
+- [x] Implement .BIN binary log parser using JsDataflashParser (client-side)
+- [ ] Implement GPS anonymization function (deferred for later)
+- [x] Add db helper functions for flight logs CRUD (createFlightLog, getFlightLogsForDrone, getFlightLogById, deleteFlightLog)
+- [x] Add tRPC procedures: flightLogs.upload, list, get, delete, getDownloadUrl
+
+### Phase 3: REST API & Storage
+- [x] Add REST endpoint POST /api/rest/flight-log/upload for Pi auto-upload
+- [x] Implement S3 storage flow for log files
+- [x] Re-parse from S3 on each view (no cached parsedData in DB)
+
+### Phase 4: Frontend
+- [x] Replace Coming Soon placeholder with full Flight Analytics app
+- [x] Build upload view (file picker for .BIN/.log files)
+- [x] Build analysis list view (sidebar list of past logs per drone)
+- [x] Build analysis detail view with categorized interactive charts
+- [x] Implement chart types using Recharts (ATT, RATE, BARO, ESC, BAT, GPA, VIBE, RCIN, RCOU, XKF4)
+- [x] Add drone selector using useDroneSelection("analytics")
+- [ ] Add markdown rendering for flight notes (deferred)
+- [ ] Add video gallery for attached media (deferred)
+
+### Phase 5: Tests
+- [x] Write vitest tests for flight analytics backend
+- [x] Write vitest tests for chart configuration module
+- [x] Write vitest tests for tRPC procedures
+- [x] Write vitest tests for REST endpoint
+
+## Flight Analytics Parser Fix (Sample .BIN File Testing)
+
+- [x] Debug DataflashParser with sample 00000092.BIN file
+- [x] Fix S3 download proxy issue (browser fetch returning compressed bytes via Manus proxy)
+- [x] Add server-side download proxy (flightLogs.getDownloadData tRPC endpoint)
+- [x] Fix instance-based message type resolution (BARO[0], GPS[0], ESC[0], etc.)
+- [x] Fix toChartData to resolve against parsedMessages instead of types (types has both BARO and BARO[0] but messages only has BARO[0])
+- [x] Verify all 17 charts render with data from sample .BIN file
+- [x] Remove debug info display from production UI
+- [x] Write 30 unit tests for flight-charts functions (resolveMessageKey, toChartData, getAvailableCharts, formatTime, etc.)
+- [x] All 397 tests passing across 17 test files
+
+## Flight Analytics .LOG File Support
+
+- [x] Fix DataflashParser text log (.log) format parsing - added DfReaderText method
+- [x] Verify all chart types render from .log file data (Node.js test: 35 message types, 25 message keys)
+- [x] Test .log file parsing end-to-end (extractStartTime: 2025-02-25T22:30:08.701Z, stats: 5971 ESC messages)
+- [x] Update tests for .log format support (24 new text-log-parser tests, 421 total tests passing)
+
+## Flight Summary Panel & Chart Export
+
+### Flight Summary Panel
+- [x] Create extractFlightSummary function in flight-charts.ts
+- [x] Extract total flight time from first/last TimeUS
+- [x] Extract max altitude from BARO data
+- [x] Extract max speed from GPS data
+- [x] Extract battery consumed from BAT data (start vs end voltage, mAh consumed)
+- [x] Extract max distance from home from GPS data (replaced with max GPS altitude)
+- [x] Extract vibration magnitude and ESC RPM stats
+- [x] Extract GPS fix quality stats (fix type, satellite count)
+- [x] Build FlightSummaryPanel UI component with stat cards (8 stat categories)
+- [x] Integrate summary panel at top of analysis detail view
+
+### Chart Export Buttons
+- [x] Add PNG export button per chart (SVG serialization to canvas)
+- [x] Add CSV export button per chart (chartDataToCsv + downloadCsv)
+- [x] Style export buttons consistently with app theme (ghost icon buttons in chart header)
+
+### Tests
+- [x] Write vitest tests for extractFlightSummary function (10 tests)
+- [x] Write vitest tests for CSV export utility (7 tests)
+- [x] Verify all 438 tests pass across 19 test files
+
+## Flight Mode Timeline
+
+- [x] Parse MODE messages from DataFlash log (mode name, time) - handles both text and binary formats
+- [x] Extract flight mode changes into structured FlightModeSegment array with extractFlightModes()
+- [x] Build FlightModeTimeline UI component (compact bar above charts + full detail view in tab)
+- [x] Show mode labels, time ranges, durations, and color-coded segments
+- [x] Integrate timeline above charts and as dedicated Flight Modes tab
+
+## GPS Ground Track Map
+
+- [x] Parse GPS Lat/Lng data from parsed messages with extractGpsTrack() (handles degrees + 1e-7 format)
+- [x] Build GpsGroundTrack component using MapView (Google Maps proxy)
+- [x] Plot flight path as polyline with auto-fit bounds
+- [x] Show start (green), end (red), and mode change markers on map
+- [x] Display track stats (points, duration, altitude range, max speed)
+- [x] Integrate map as GPS Track tab in analysis view
+
+## Compare Flights
+
+- [x] Add Compare mode toggle with Slot A/B selection UI
+- [x] Parse both logs independently with reusable parseFlightLog function
+- [x] Build CompareView with side-by-side charts and slot cards
+- [x] Chart selector dropdown to compare any available chart type
+- [x] CompareSummaryTable showing 10 metrics side-by-side
+- [x] Write vitest tests for all three features (20 new tests, 458 total passing)
+
+## GPS Track Gradient Polyline
+
+- [x] Add color interpolation utility for altitude/speed gradient mapping (interpolateGradientColor)
+- [x] Replace single polyline with segmented gradient polyline (one segment per GPS point pair)
+- [x] Add altitude color mode (blue→green→yellow→red gradient)
+- [x] Add speed color mode (green→yellow→orange→red gradient)
+- [x] Add toggle UI with Plain/Altitude/Speed buttons
+- [x] Add color legend bar with gradient scale and min/max labels
+- [x] Write vitest tests for gradient color interpolation (21 tests)
+- [x] Verify all 479 tests pass across 21 test files
+
+## Flight Mode Filtering for Charts
+
+- [x] Add timeRange filter state (startTime, endTime) to analysis detail view
+- [x] Make FlightModeTimeline segments clickable to set time range filter (both compact and full views)
+- [x] Add filterChartDataByTimeRange utility in flight-charts.ts to slice chart data
+- [x] Apply time range filter to all chart data before rendering
+- [x] Add visual indicator on timeline (ring highlight on active, opacity dim on inactive)
+- [x] Add "Clear Filter" button in filter banner + click-to-toggle on segments
+- [x] Show filtered time range info (mode badge, time range, duration) in a banner
+- [x] Write vitest tests for filterChartDataByTimeRange (11 tests)
+- [x] Verify all 490 tests pass across 22 test files
+
+## Bug Fixes
+
+- [x] Remove horizontal scrollbar from sidebar app bar (added overflow-x-hidden to sidebar container and scrollable div)
+
+## Flight Analytics Persistence
+
+- [x] Persist selected log ID, droneId, and activeTab to localStorage on parse complete
+- [x] Auto-re-parse the persisted log when the Flight Analytics app is re-opened (two-phase useEffect)
+- [x] Persist active tab selection (charts/timeline/gps/compare)
+- [x] Clear persisted state on delete, error, or Try Again
+- [x] Handle edge cases: deleted log, different drone, invalid JSON, missing fields
+- [x] Write vitest tests for persistence helpers (16 tests, 506 total passing)
+
+## Flight Analytics Instant Restore (No Re-parsing)
+
+- [x] Add module-level cache to store full parsed state (parseResult, chartData, flightModes, gpsTracks, summary, etc.)
+- [x] On app switch, restore cached state instantly without showing download/parse progress
+- [x] Keep localStorage for tab/logId/droneId persistence across full page refreshes (re-parse only on refresh)
+- [x] Clear cache when user deletes the active log or encounters errors
+- [x] Update vitest tests for new caching behavior (18 new cache tests, 524 total passing)
+
+## Brush-Select Time Range on Charts
+
+- [x] Add click-and-drag brush selection on all charts (Recharts ReferenceArea zoom)
+- [x] Show visual selection overlay during drag
+- [x] Apply zoom to all charts simultaneously when brush completes
+- [x] Add reset zoom button to return to full time range
+- [x] Integrate with existing mode-based time filter (both should work together)
+- [x] Persist brush zoom state in module-level cache
+- [x] Verify mode-based filtering still works correctly
+- [x] Verify cache persistence works with brush zoom
+- [x] Write vitest tests for brush-select feature (29 new tests, 553 total passing)
+
+## Bug Fixes
+
+- [x] Fix: Flight mode filtered charts show "No data available" when mode filter is applied (toChartData used absolute time, now uses relative time matching extractFlightModes)
+- [x] Replace Quiver Hub icon with user's arrow logomark image (sidebar, header, APP_LOGO, favicon)

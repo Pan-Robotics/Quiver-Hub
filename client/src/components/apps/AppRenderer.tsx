@@ -1,11 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card } from "@/components/ui/card";
 import { Loader2, AlertCircle } from "lucide-react";
 import { io, Socket } from "socket.io-client";
 import PointCloudCanvas from "@/components/widgets/PointCloudCanvas";
+import PointCloudCanvas2D from "@/components/widgets/PointCloudCanvas2D";
 import LineChartWidget from "@/components/widgets/LineChartWidget";
 import BarChartWidget from "@/components/widgets/BarChartWidget";
+import { Button } from "@/components/ui/button";
+import { Box, Grid2x2 } from "lucide-react";
 
 interface Widget {
   id: string;
@@ -25,9 +28,120 @@ interface AppRendererProps {
   appId: string;
 }
 
+/** Per-stream subscription config */
+interface StreamSubscription {
+  streamId: string;
+  streamEvent: string;
+  subscribeEvent: string;
+  subscribeParam: string;
+  selectedFields: string[];
+  fieldAliases: Record<string, string>;
+}
+
+/** Multi-stream config format */
+interface MultiStreamConfig {
+  streams: StreamSubscription[];
+  fieldMappings: Record<string, string>; // widgetField -> "streamId:fieldPath"
+}
+
+/** Legacy single-stream config */
+interface LegacyStreamConfig {
+  streamId: string;
+  streamEvent: string;
+  subscribeEvent: string;
+  subscribeParam: string;
+  fieldMappings: Record<string, string>;
+}
+
+/**
+ * Canvas widget with 2D/3D render mode toggle.
+ * Matches the RPLidar LidarApp visualization approach.
+ */
+function CanvasWidget({
+  widget,
+  value,
+  config,
+}: {
+  widget: Widget;
+  value: any;
+  config: Record<string, any>;
+}) {
+  const [renderMode, setRenderMode] = useState<'2d' | '3d'>('2d');
+
+  // Parse point data - handle both string and array inputs
+  const parsedPoints = useMemo(() => {
+    if (!value) return [];
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return [];
+      }
+    }
+    if (Array.isArray(value)) return value;
+    return [];
+  }, [value]);
+
+  return (
+    <Card key={widget.id} className="p-4">
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-sm text-muted-foreground">{config.label || "Canvas"}</p>
+          {/* 2D/3D Render Mode Toggle */}
+          <div className="flex items-center gap-1 bg-muted rounded-md p-0.5">
+            <Button
+              variant={renderMode === '2d' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setRenderMode('2d')}
+              className="h-7 px-2 text-xs"
+            >
+              <Grid2x2 size={12} className="mr-1" />
+              2D
+            </Button>
+            <Button
+              variant={renderMode === '3d' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setRenderMode('3d')}
+              className="h-7 px-2 text-xs"
+            >
+              <Box size={12} className="mr-1" />
+              3D
+            </Button>
+          </div>
+        </div>
+        <div className="w-full" style={{ height: config.height || 400 }}>
+          {renderMode === '2d' ? (
+            <PointCloudCanvas2D
+              points={parsedPoints}
+              colorMode={config.colorMode || 'distance'}
+              minDistance={config.minDistance || 0}
+              maxDistance={config.maxDistance || 5000}
+              pointSize={config.pointSize || 3}
+              showGrid={config.showGrid !== false}
+              showAxes={config.showAxes !== false}
+            />
+          ) : (
+            <PointCloudCanvas
+              points={parsedPoints}
+              colorMode={config.colorMode || 'distance'}
+              minDistance={config.minDistance || 0}
+              maxDistance={config.maxDistance || 5000}
+              pointSize={config.pointSize || 4}
+              showGrid={config.showGrid !== false}
+              showAxes={config.showAxes !== false}
+            />
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 export default function AppRenderer({ appId }: AppRendererProps) {
   const [liveData, setLiveData] = useState<Record<string, any>>({});
   const [socket, setSocket] = useState<Socket | null>(null);
+  // Ref to accumulate data from multiple streams without stale closure issues
+  const liveDataRef = useRef<Record<string, any>>({});
   
   // Load app configuration
   const { data: apps } = trpc.appBuilder.listApps.useQuery({ publishedOnly: false });
@@ -38,6 +152,95 @@ export default function AppRenderer({ appId }: AppRendererProps) {
     ? (typeof app.uiSchema === 'string' ? JSON.parse(app.uiSchema) : app.uiSchema)
     : null;
 
+  // Parse data source config
+  const dataSource = (app as any)?.dataSource || 'custom_endpoint';
+  const dataSourceConfig = useMemo(() => {
+    const raw = (app as any)?.dataSourceConfig;
+    if (!raw) return null;
+    if (typeof raw === 'string') {
+      try { return JSON.parse(raw); } catch { return null; }
+    }
+    return raw;
+  }, [app]);
+
+  // Normalize config to multi-stream format (handles legacy single-stream)
+  const normalizedConfig = useMemo((): MultiStreamConfig | null => {
+    if (dataSource !== 'stream_subscription' || !dataSourceConfig) return null;
+
+    // New multi-stream format
+    if (dataSourceConfig.streams && Array.isArray(dataSourceConfig.streams)) {
+      return dataSourceConfig as MultiStreamConfig;
+    }
+
+    // Legacy single-stream format: convert to multi-stream
+    if (dataSourceConfig.streamId) {
+      const legacy = dataSourceConfig as LegacyStreamConfig;
+      return {
+        streams: [{
+          streamId: legacy.streamId,
+          streamEvent: legacy.streamEvent,
+          subscribeEvent: legacy.subscribeEvent,
+          subscribeParam: legacy.subscribeParam,
+          selectedFields: legacy.fieldMappings ? Object.values(legacy.fieldMappings) : [],
+          fieldAliases: {},
+        }],
+        fieldMappings: legacy.fieldMappings || {},
+      };
+    }
+
+    return null;
+  }, [dataSource, dataSourceConfig]);
+
+  // Helper to extract nested values using dot notation (e.g., "stats.point_count")
+  const getNestedValue = useCallback((obj: any, path: string): any => {
+    return path.split('.').reduce((current, key) => current?.[key], obj);
+  }, []);
+
+  // Parse a field mapping string into streamId and fieldPath
+  // Handles app: prefixed IDs (e.g., "app:weather-station:temperature")
+  const parseFieldMapping = useCallback((mapping: string): { streamId: string; fieldPath: string } | null => {
+    if (mapping.startsWith('app:')) {
+      const afterApp = mapping.substring(4);
+      const colonIdx = afterApp.indexOf(':');
+      if (colonIdx === -1) return null;
+      return {
+        streamId: 'app:' + afterApp.substring(0, colonIdx),
+        fieldPath: afterApp.substring(colonIdx + 1),
+      };
+    }
+    const colonIdx = mapping.indexOf(':');
+    if (colonIdx === -1) return null;
+    return {
+      streamId: mapping.substring(0, colonIdx),
+      fieldPath: mapping.substring(colonIdx + 1),
+    };
+  }, []);
+
+  // Apply field mappings from a specific stream to update merged data
+  const applyStreamData = useCallback((
+    streamId: string,
+    rawData: any,
+    fieldMappings: Record<string, string>
+  ) => {
+    const updates: Record<string, any> = {};
+    
+    for (const [widgetField, mapping] of Object.entries(fieldMappings)) {
+      const parsed = parseFieldMapping(mapping);
+      if (!parsed) continue;
+      
+      if (parsed.streamId === streamId) {
+        updates[widgetField] = getNestedValue(rawData, parsed.fieldPath);
+      }
+    }
+
+    if (Object.keys(updates).length > 0) {
+      // Merge with existing data from other streams
+      const newData = { ...liveDataRef.current, ...updates };
+      liveDataRef.current = newData;
+      setLiveData(newData);
+    }
+  }, [getNestedValue, parseFieldMapping]);
+
   // Connect to WebSocket for live data
   useEffect(() => {
     const newSocket = io({
@@ -45,19 +248,66 @@ export default function AppRenderer({ appId }: AppRendererProps) {
     });
 
     newSocket.on("connect", () => {
-      console.log("[AppRenderer] WebSocket connected");
-      newSocket.emit("subscribe_app", appId);
+      console.log("[AppRenderer] WebSocket connected, dataSource:", dataSource);
+
+      if (dataSource === 'stream_subscription' && normalizedConfig) {
+        // Multi-stream: subscribe to each unique stream
+        const subscribedStreams = new Set<string>();
+        
+        for (const sub of normalizedConfig.streams) {
+          if (subscribedStreams.has(sub.streamId)) continue;
+          subscribedStreams.add(sub.streamId);
+          
+          console.log(`[AppRenderer] Subscribing to stream: ${sub.streamId}`);
+          
+          if (sub.streamId.startsWith('app:')) {
+            const sourceAppId = sub.streamId.replace('app:', '');
+            newSocket.emit('subscribe_app', sourceAppId);
+          } else {
+            newSocket.emit('subscribe_stream', sub.streamId);
+          }
+        }
+      } else {
+        // Default: subscribe to this app's own data channel
+        newSocket.emit("subscribe_app", appId);
+      }
     });
 
+    // Handle app_data events (for custom_endpoint, passthrough, or app: stream subscriptions)
     newSocket.on("app_data", (message: { appId: string; data: any; timestamp: string }) => {
-      console.log("[AppRenderer] Received app data:", message);
-      console.log("[AppRenderer] Data fields:", Object.keys(message.data));
-      console.log("[AppRenderer] Data values:", message.data);
-      if (message.appId === appId) {
-        console.log("[AppRenderer] Setting liveData to:", message.data);
+      if (dataSource === 'stream_subscription' && normalizedConfig) {
+        // Check if any stream subscriptions are for custom apps
+        for (const sub of normalizedConfig.streams) {
+          if (sub.streamId.startsWith('app:')) {
+            const sourceAppId = sub.streamId.replace('app:', '');
+            if (message.appId === sourceAppId) {
+              applyStreamData(sub.streamId, message.data, normalizedConfig.fieldMappings);
+            }
+          }
+        }
+      } else if (message.appId === appId) {
+        liveDataRef.current = message.data;
         setLiveData(message.data);
       }
     });
+
+    // Handle built-in stream events (pointcloud, telemetry, camera_status)
+    if (dataSource === 'stream_subscription' && normalizedConfig) {
+      const builtInEvents = new Set<string>();
+      
+      for (const sub of normalizedConfig.streams) {
+        if (!sub.streamId.startsWith('app:')) {
+          builtInEvents.add(sub.streamId);
+        }
+      }
+
+      for (const eventName of Array.from(builtInEvents)) {
+        newSocket.on(eventName, (message: any) => {
+          console.log(`[AppRenderer] Received ${eventName} stream data`);
+          applyStreamData(eventName, message, normalizedConfig.fieldMappings);
+        });
+      }
+    }
 
     newSocket.on("disconnect", () => {
       console.log("[AppRenderer] WebSocket disconnected");
@@ -67,11 +317,26 @@ export default function AppRenderer({ appId }: AppRendererProps) {
 
     return () => {
       if (newSocket) {
-        newSocket.emit("unsubscribe_app", appId);
+        if (dataSource === 'stream_subscription' && normalizedConfig) {
+          const unsubscribedStreams = new Set<string>();
+          for (const sub of normalizedConfig.streams) {
+            if (unsubscribedStreams.has(sub.streamId)) continue;
+            unsubscribedStreams.add(sub.streamId);
+            
+            if (sub.streamId.startsWith('app:')) {
+              const sourceAppId = sub.streamId.replace('app:', '');
+              newSocket.emit('unsubscribe_app', sourceAppId);
+            } else {
+              newSocket.emit('unsubscribe_stream', sub.streamId);
+            }
+          }
+        } else {
+          newSocket.emit("unsubscribe_app", appId);
+        }
         newSocket.disconnect();
       }
     };
-  }, [appId]);
+  }, [appId, dataSource, normalizedConfig, applyStreamData]);
 
   if (!app) {
     return (
@@ -98,7 +363,6 @@ export default function AppRenderer({ appId }: AppRendererProps) {
 
   const renderWidget = (widget: Widget) => {
     const dataField = widget.dataBinding?.field;
-    console.log(`[Widget ${widget.id}] dataField: ${dataField}, liveData:`, liveData, `value:`, dataField ? liveData[dataField] : undefined);
     const value = dataField ? (liveData[dataField] ?? 0) : 0;
     const config = widget.config || {};
 
@@ -128,7 +392,6 @@ export default function AppRenderer({ appId }: AppRendererProps) {
               <p className="text-sm text-muted-foreground mb-4">{config.label || dataField || "Value"}</p>
               <div className="relative w-32 h-32 mx-auto">
                 <svg className="w-full h-full" viewBox="0 0 100 100">
-                  {/* Background circle */}
                   <circle
                     cx="50"
                     cy="50"
@@ -139,7 +402,6 @@ export default function AppRenderer({ appId }: AppRendererProps) {
                     className="text-muted"
                     opacity="0.2"
                   />
-                  {/* Progress circle */}
                   <circle
                     cx="50"
                     cy="50"
@@ -180,7 +442,6 @@ export default function AppRenderer({ appId }: AppRendererProps) {
 
       case "line_chart":
       case "line-chart":
-        // Line chart for time-series data
         return (
           <Card key={widget.id} className="p-4">
             <div>
@@ -199,7 +460,6 @@ export default function AppRenderer({ appId }: AppRendererProps) {
 
       case "bar_chart":
       case "bar-chart":
-        // Bar chart for categorical data
         return (
           <Card key={widget.id} className="p-4">
             <div>
@@ -217,7 +477,6 @@ export default function AppRenderer({ appId }: AppRendererProps) {
         );
 
       case "map":
-        // Map widget expects latitude and longitude fields
         const latField = config.latitudeField || 'latitude';
         const lonField = config.longitudeField || 'longitude';
         const latitude = liveData[latField] || 0;
@@ -283,26 +542,13 @@ export default function AppRenderer({ appId }: AppRendererProps) {
         );
 
       case "canvas":
-        // Canvas widget for custom visualizations (e.g., point clouds)
-        const canvasData = value;
-        
         return (
-          <Card key={widget.id} className="p-4">
-            <div>
-              <p className="text-sm text-muted-foreground mb-2">{config.label || "Canvas"}</p>
-              <div className="w-full" style={{ height: config.height || 400 }}>
-                <PointCloudCanvas
-                  points={canvasData}
-                  colorMode={config.colorMode || 'distance'}
-                  minDistance={config.minDistance || 0}
-                  maxDistance={config.maxDistance || 5000}
-                  pointSize={config.pointSize || 2}
-                  showGrid={config.showGrid !== false}
-                  showAxes={config.showAxes !== false}
-                />
-              </div>
-            </div>
-          </Card>
+          <CanvasWidget
+            key={widget.id}
+            widget={widget}
+            value={value}
+            config={config}
+          />
         );
 
       default:
@@ -326,6 +572,9 @@ export default function AppRenderer({ appId }: AppRendererProps) {
           <div className={`w-2 h-2 rounded-full ${socket?.connected ? 'bg-green-500' : 'bg-gray-400'}`} />
           <span className="text-xs text-muted-foreground">
             {socket?.connected ? 'Connected' : 'Disconnected'}
+            {normalizedConfig && normalizedConfig.streams.length > 1 && (
+              <> · {normalizedConfig.streams.length} streams</>
+            )}
           </span>
         </div>
       </div>
