@@ -172,6 +172,11 @@ interface AnalyticsCache {
   activeTab: string;
   parseState: ParseState;
   timeFilter: TimeFilter | null;
+  // Compare mode state
+  compareMode?: boolean;
+  compareSlotA?: CompareSlot | null;
+  compareSlotB?: CompareSlot | null;
+  compareTarget?: "A" | "B";
 }
 
 let _analyticsCache: AnalyticsCache | null = null;
@@ -255,27 +260,45 @@ export default function FlightAnalyticsApp() {
     return c?.timeFilter ?? null;
   });
 
-  // Compare flights state
-  const [compareMode, setCompareMode] = useState(false);
-  const [compareSlotA, setCompareSlotA] = useState<CompareSlot | null>(null);
-  const [compareSlotB, setCompareSlotB] = useState<CompareSlot | null>(null);
-  const [compareTarget, setCompareTarget] = useState<"A" | "B">("A");
+  // Compare flights state - restore from module-level cache for instant app-switch persistence
+  const [compareMode, setCompareMode] = useState(() => {
+    const c = getAnalyticsCache();
+    return c?.compareMode ?? false;
+  });
+  const [compareSlotA, setCompareSlotA] = useState<CompareSlot | null>(() => {
+    const c = getAnalyticsCache();
+    return c?.compareSlotA ?? null;
+  });
+  const [compareSlotB, setCompareSlotB] = useState<CompareSlot | null>(() => {
+    const c = getAnalyticsCache();
+    return c?.compareSlotB ?? null;
+  });
+  const [compareTarget, setCompareTarget] = useState<"A" | "B">(() => {
+    const c = getAnalyticsCache();
+    return c?.compareTarget ?? "A";
+  });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Persist state to both localStorage and module-level cache
   useEffect(() => {
-    if (selectedLogId && selectedDrone && parseState.status === "complete") {
-      saveAnalyticsState({ selectedLogId, droneId: selectedDrone, activeTab });
+    if (selectedDrone && (parseState.status === "complete" || compareMode)) {
+      if (selectedLogId) {
+        saveAnalyticsState({ selectedLogId, droneId: selectedDrone, activeTab });
+      }
       setAnalyticsCache({
-        selectedLogId,
+        selectedLogId: selectedLogId || 0,
         droneId: selectedDrone,
         activeTab,
         parseState,
         timeFilter,
+        compareMode,
+        compareSlotA,
+        compareSlotB,
+        compareTarget,
       });
     }
-  }, [activeTab, selectedLogId, selectedDrone, parseState.status, parseState, timeFilter]);
+  }, [activeTab, selectedLogId, selectedDrone, parseState.status, parseState, timeFilter, compareMode, compareSlotA, compareSlotB, compareTarget]);
 
   // Pending restore state - set by the early useEffect, consumed by the later one
   const [pendingRestore, setPendingRestore] = useState<{ logId: number; url: string } | null>(null);
@@ -566,6 +589,10 @@ export default function FlightAnalyticsApp() {
             parsedMessages: result.messages,
           },
           timeFilter: null,
+          compareMode,
+          compareSlotA,
+          compareSlotB,
+          compareTarget,
         });
       }
 
@@ -582,7 +609,7 @@ export default function FlightAnalyticsApp() {
       clearAnalyticsCache();
       toast.error(`Parse failed: ${err.message}`);
     }
-  }, [compareMode, compareTarget, logsQuery.data, parseFlightLog, selectedDrone, activeTab]);
+  }, [compareMode, compareTarget, compareSlotA, compareSlotB, logsQuery.data, parseFlightLog, selectedDrone, activeTab]);
 
   // Consume pending restore after handleAnalyze is available
   useEffect(() => {
@@ -667,7 +694,7 @@ export default function FlightAnalyticsApp() {
             <SelectContent>
               {drones.map((d: any) => (
                 <SelectItem key={d.droneId} value={d.droneId}>
-                  {d.name}
+                  {d.name || d.droneId}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -1684,22 +1711,7 @@ function CompareView({
 }) {
   const [selectedChart, setSelectedChart] = useState<string>("att-rp");
 
-  if (!slotA && !slotB) {
-    return (
-      <div className="flex items-center justify-center h-full text-muted-foreground">
-        <div className="text-center">
-          <GitCompare className="h-16 w-16 mx-auto mb-4 opacity-30" />
-          <p className="text-lg font-medium">Compare Flights</p>
-          <p className="text-sm mt-1">Click two flight logs from the sidebar to compare them side-by-side</p>
-          <p className="text-xs mt-2 text-muted-foreground">
-            Use the Slot A / Slot B buttons in the header to select which slot to load into
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  // Find charts available in both logs
+  // All hooks MUST be called before any early return to satisfy Rules of Hooks
   const commonCharts = useMemo(() => {
     if (!slotA?.parseState?.availableCharts || !slotB?.parseState?.availableCharts) {
       return slotA?.parseState?.availableCharts || slotB?.parseState?.availableCharts || [];
@@ -1716,6 +1728,21 @@ function CompareView({
   }, [slotA, slotB]);
 
   const currentChart = allCharts.find((c) => c.id === selectedChart) || allCharts[0];
+
+  if (!slotA && !slotB) {
+    return (
+      <div className="flex items-center justify-center h-full text-muted-foreground">
+        <div className="text-center">
+          <GitCompare className="h-16 w-16 mx-auto mb-4 opacity-30" />
+          <p className="text-lg font-medium">Compare Flights</p>
+          <p className="text-sm mt-1">Click two flight logs from the sidebar to compare them side-by-side</p>
+          <p className="text-xs mt-2 text-muted-foreground">
+            Use the Slot A / Slot B buttons in the header to select which slot to load into
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 space-y-4">
